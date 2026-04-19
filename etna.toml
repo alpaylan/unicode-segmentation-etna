@@ -1,0 +1,50 @@
+# ETNA workload index for unicode-segmentation.
+#
+# One [[variant]] per injected mutation. Source of truth for variant->property
+# mapping. Every other fact is derivable from the source tree:
+#   - ls patches/*.patch                               (patch-based variants)
+#   - grep -rn "pub fn property_" src/                 (property functions)
+#   - grep -rn "fn witness_.*_case_" tests/ src/       (witness tests)
+#
+# Base commit for this workload is HEAD of the bootstrap ancestor of all
+# etna/<variant> branches. Recover with: `git merge-base --octopus etna/*`.
+
+[[variant]]
+name = "grapheme_next_boundary_unwrap_0f55f70_1"
+property = "grapheme_next_boundary_empty_chunk_no_panic"
+injection = "patch"
+patch = "patches/grapheme_next_boundary_unwrap_0f55f70_1.patch"
+source_commit = "0f55f70b445202fd9d3c101b9936e6649e808441"
+witnesses = [
+    "witness_grapheme_next_boundary_empty_chunk_no_panic_case_ascii_suffix",
+    "witness_grapheme_next_boundary_empty_chunk_no_panic_case_legacy_mode",
+    "witness_grapheme_next_boundary_empty_chunk_no_panic_case_multibyte",
+]
+frameworks = ["proptest", "quickcheck", "crabcheck", "hegel"]
+files = ["src/grapheme.rs"]
+
+[[variant]]
+name = "grapheme_prev_boundary_chunk_start_fb5d7b6_1"
+property = "grapheme_prev_boundary_chunk_start_no_panic"
+injection = "patch"
+patch = "patches/grapheme_prev_boundary_chunk_start_fb5d7b6_1.patch"
+source_commit = "fb5d7b6714d265aae844ce8f7df35d675505026f"
+witnesses = [
+    "witness_grapheme_prev_boundary_chunk_start_no_panic_case_ascii",
+    "witness_grapheme_prev_boundary_chunk_start_no_panic_case_ascii_end",
+    "witness_grapheme_prev_boundary_chunk_start_no_panic_case_legacy",
+]
+frameworks = ["proptest", "quickcheck", "crabcheck", "hegel"]
+files = ["src/grapheme.rs"]
+
+[[variant]]
+name = "ascii_word_bound_drop_apostrophe_af87c8d_1"
+property = "ascii_word_bound_indices_match"
+injection = "patch"
+patch = "patches/ascii_word_bound_drop_apostrophe_af87c8d_1.patch"
+source_commit = "af87c8d331b81d2398997d89d2164c252ae6e9f5"
+witnesses = [
+    "witness_ascii_word_bound_indices_match_case_cant_apostrophe",
+]
+frameworks = ["proptest", "quickcheck", "crabcheck", "hegel"]
+files = ["src/word.rs"]
