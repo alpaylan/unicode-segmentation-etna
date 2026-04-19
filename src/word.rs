@@ -774,7 +774,7 @@ impl<'a> UWordBounds<'a> {
 ///
 /// Any other single ASCII byte is its own boundary (the default WB999).
 #[derive(Debug)]
-struct AsciiWordBoundIter<'a> {
+pub(crate) struct AsciiWordBoundIter<'a> {
     rest: &'a str,
     offset: usize,
 }
@@ -1006,7 +1006,7 @@ pub fn new_word_bound_indices(s: &str) -> UWordBoundIndices<'_> {
 }
 
 #[inline]
-fn new_ascii_word_bound_indices(s: &str) -> AsciiWordBoundIter<'_> {
+pub(crate) fn new_ascii_word_bound_indices(s: &str) -> AsciiWordBoundIter<'_> {
     AsciiWordBoundIter::new(s)
 }
 

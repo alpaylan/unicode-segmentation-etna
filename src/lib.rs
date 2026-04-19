@@ -56,7 +56,9 @@
 )]
 #![no_std]
 
-#[cfg(test)]
+#[cfg(any(test, feature = "etna"))]
+extern crate alloc;
+#[cfg(any(test, feature = "etna"))]
 extern crate std;
 
 pub use grapheme::{GraphemeCursor, GraphemeIncomplete};
@@ -70,6 +72,9 @@ mod sentence;
 #[rustfmt::skip]
 mod tables;
 mod word;
+
+#[cfg(feature = "etna")]
+pub mod etna;
 
 /// Methods for segmenting strings according to
 /// [Unicode Standard Annex #29](http://www.unicode.org/reports/tr29/).

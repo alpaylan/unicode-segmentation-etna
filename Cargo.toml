@@ -18,11 +18,11 @@ according to Unicode Standard Annex #29 rules.
 rust-version = "1.85.0"
 
 include = [
-    "COPYRIGHT", 
-    "LICENSE-MIT", 
-    "LICENSE-APACHE", 
-    "Cargo.toml", 
-    "src/**/*.rs", 
+    "COPYRIGHT",
+    "LICENSE-MIT",
+    "LICENSE-APACHE",
+    "Cargo.toml",
+    "src/**/*.rs",
     "README.md",
     "tests/**/*.rs",
     "benches/**/*.rs",
@@ -30,11 +30,18 @@ include = [
 
 [features]
 no_std = [] # This is a no-op, preserved for backward compatibility only.
+etna = []  # enables the std-dependent ETNA property module and the `etna` bin
+default = ["etna"]
+
+[dependencies]
+proptest   = { version = "1.7.0" }
+quickcheck = { path = "/Users/akeles/Programming/projects/PbtBenchmark/quickcheck", features = ["etna"] }
+crabcheck  = { path = "/Users/akeles/Programming/projects/PbtBenchmark/crabcheck" }
+hegeltest  = "0.3.7"
 
 [dev-dependencies]
-quickcheck = "1.0"
+quickcheck_macros = { path = "/Users/akeles/Programming/projects/PbtBenchmark/quickcheck/quickcheck_macros" }
 criterion = "0.5"
-proptest = "1.7.0"
 
 [[bench]]
 name = "chars"
@@ -52,3 +59,7 @@ harness = false
 name = "unicode_word_indices"
 harness = false
 
+[[bin]]
+name = "etna"
+path = "src/bin/etna.rs"
+required-features = ["etna"]

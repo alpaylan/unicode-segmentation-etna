@@ -8,7 +8,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use quickcheck::quickcheck;
+#[cfg(not(feature = "etna"))]
+use quickcheck_macros::quickcheck;
 use unicode_segmentation::UnicodeSegmentation;
 
 #[rustfmt::skip]
@@ -212,36 +213,44 @@ fn test_sentences() {
     }
 }
 
-quickcheck! {
-    fn quickcheck_forward_reverse_graphemes_extended(s: String) -> bool {
-        let a = s.graphemes(true).collect::<Vec<_>>();
-        let mut b = s.graphemes(true).rev().collect::<Vec<_>>();
-        b.reverse();
-        a == b
-    }
+#[cfg(not(feature = "etna"))]
+#[quickcheck]
+fn quickcheck_forward_reverse_graphemes_extended(s: String) -> bool {
+    let a = s.graphemes(true).collect::<Vec<_>>();
+    let mut b = s.graphemes(true).rev().collect::<Vec<_>>();
+    b.reverse();
+    a == b
+}
 
-    fn quickcheck_forward_reverse_graphemes_legacy(s: String) -> bool {
-        let a = s.graphemes(false).collect::<Vec<_>>();
-        let mut b = s.graphemes(false).rev().collect::<Vec<_>>();
-        b.reverse();
-        a == b
-    }
+#[cfg(not(feature = "etna"))]
+#[quickcheck]
+fn quickcheck_forward_reverse_graphemes_legacy(s: String) -> bool {
+    let a = s.graphemes(false).collect::<Vec<_>>();
+    let mut b = s.graphemes(false).rev().collect::<Vec<_>>();
+    b.reverse();
+    a == b
+}
 
-    fn quickcheck_join_graphemes(s: String) -> bool {
-        let a = s.graphemes(true).collect::<String>();
-        let b = s.graphemes(false).collect::<String>();
-        a == s && b == s
-    }
+#[cfg(not(feature = "etna"))]
+#[quickcheck]
+fn quickcheck_join_graphemes(s: String) -> bool {
+    let a = s.graphemes(true).collect::<String>();
+    let b = s.graphemes(false).collect::<String>();
+    a == s && b == s
+}
 
-    fn quickcheck_forward_reverse_words(s: String) -> bool {
-        let a = s.split_word_bounds().collect::<Vec<_>>();
-        let mut b = s.split_word_bounds().rev().collect::<Vec<_>>();
-        b.reverse();
-        a == b
-    }
+#[cfg(not(feature = "etna"))]
+#[quickcheck]
+fn quickcheck_forward_reverse_words(s: String) -> bool {
+    let a = s.split_word_bounds().collect::<Vec<_>>();
+    let mut b = s.split_word_bounds().rev().collect::<Vec<_>>();
+    b.reverse();
+    a == b
+}
 
-    fn quickcheck_join_words(s: String) -> bool {
-        let a = s.split_word_bounds().collect::<String>();
-        a == s
-    }
+#[cfg(not(feature = "etna"))]
+#[quickcheck]
+fn quickcheck_join_words(s: String) -> bool {
+    let a = s.split_word_bounds().collect::<String>();
+    a == s
 }
