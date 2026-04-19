@@ -802,7 +802,7 @@ impl<'a> AsciiWordBoundIter<'a> {
             // "(MidLetter | MidNumLetQ) AHLetter (MidLetter | MidNumLetQ)"
             // MidLetter  = b':'
             // MidNumLetQ = b'.' | b'\''
-            b'\'' | b'.' | b':' if prev.is_ascii_alphabetic() && next.is_ascii_alphabetic() => true,
+            b'.' | b':' if prev.is_ascii_alphabetic() && next.is_ascii_alphabetic() => true,
             _ => false,
         }
     }
