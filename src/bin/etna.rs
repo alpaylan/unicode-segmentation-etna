@@ -111,7 +111,7 @@ fn run_etna_property(property: &str) -> Outcome {
             property_grapheme_prev_boundary_chunk_start_no_panic("abcd".to_string(), 2, true),
         ),
         "AsciiWordBoundIndicesMatch" => to_err(property_ascii_word_bound_indices_match(
-            "Hello, world!".to_string(),
+            "can't".to_string(),
         )),
         _ => {
             return (
@@ -233,8 +233,14 @@ fn qc_grapheme_prev_boundary_chunk_start(s_tag: u8, off_tag: u8, is_extended: bo
     }
 }
 
-fn qc_ascii_word_bound_indices_match(s: String) -> TestResult {
+fn qc_ascii_word_bound_indices_match(tag: u8) -> TestResult {
+    // Avoid quickcheck's String::Arbitrary, which panics with
+    // "cannot sample empty range" on the first iterations when g.size() == 0.
     QC_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let s = pick_string(tag);
+    if !s.is_ascii() {
+        return TestResult::discard();
+    }
     match property_ascii_word_bound_indices_match(s) {
         PropertyResult::Pass => TestResult::passed(),
         PropertyResult::Discard => TestResult::discard(),
@@ -257,7 +263,7 @@ fn run_quickcheck_property(property: &str) -> Outcome {
             qc_grapheme_prev_boundary_chunk_start as fn(u8, u8, bool) -> TestResult,
         ),
         "AsciiWordBoundIndicesMatch" => {
-            qc.quicktest(qc_ascii_word_bound_indices_match as fn(String) -> TestResult)
+            qc.quicktest(qc_ascii_word_bound_indices_match as fn(u8) -> TestResult)
         }
         _ => {
             return (
@@ -422,7 +428,7 @@ fn run_hegel_property(property: &str) -> Outcome {
             Hegel::new(|tc: hegel::TestCase| {
                 HG_COUNTER.fetch_add(1, Ordering::Relaxed);
                 let s = tc.draw(hgen::text().min_size(0).max_size(32));
-                let ascii: String = s.chars().map(|c| ((c as u32 & 0x7f) as u8 as char)).collect();
+                let ascii: String = s.chars().map(|c| (c as u32 & 0x7f) as u8 as char).collect();
                 if let PropertyResult::Fail(m) = property_ascii_word_bound_indices_match(ascii) {
                     panic!("{}", m);
                 }
