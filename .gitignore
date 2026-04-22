@@ -4,3 +4,7 @@ scripts/tmp
 *.pyc
 *.txt
 /.hegel/
+/.marauders/
+/.migration-cache/
+/etna.log
+/progress.jsonl

@@ -1,96 +1,72 @@
-# Bugs
+# unicode-segmentation — Injected Bugs
 
-This workload injects three regressions into `unicode-segmentation`. Each
-maps to one `etna/<variant>` branch that applies a patch from `patches/`,
-and one framework-neutral `property_<name>` function in `src/etna.rs`.
+Total mutations: 3
 
 ## Bug Index
 
-| Variant                                           | Origin (fix commit)      | Target file       |
-|---------------------------------------------------|--------------------------|-------------------|
-| `grapheme_next_boundary_unwrap_0f55f70_1`         | `0f55f70` (#137, 2024)   | `src/grapheme.rs` |
-| `grapheme_prev_boundary_chunk_start_fb5d7b6_1`    | `fb5d7b6` (#38,#39, 2018)| `src/grapheme.rs` |
-| `ascii_word_bound_drop_apostrophe_af87c8d_1`      | `af87c8d` (#147, 2025)   | `src/word.rs`     |
+| # | Variant | Name | Location | Injection | Fix Commit |
+|---|---------|------|----------|-----------|------------|
+| 1 | `ascii_word_bound_drop_apostrophe_af87c8d_1` | `ascii_word_bound_drop_apostrophe` | `src/word.rs` | `patch` | `af87c8d331b81d2398997d89d2164c252ae6e9f5` |
+| 2 | `grapheme_next_boundary_unwrap_0f55f70_1` | `grapheme_next_boundary_unwrap` | `src/grapheme.rs` | `patch` | `0f55f70b445202fd9d3c101b9936e6649e808441` |
+| 3 | `grapheme_prev_boundary_chunk_start_fb5d7b6_1` | `grapheme_prev_boundary_chunk_start` | `src/grapheme.rs` | `patch` | `fb5d7b6714d265aae844ce8f7df35d675505026f` |
 
 ## Property Mapping
 
-| Variant                                           | Property (framework-neutral)                       |
-|---------------------------------------------------|----------------------------------------------------|
-| `grapheme_next_boundary_unwrap_0f55f70_1`         | `property_grapheme_next_boundary_empty_chunk_no_panic` |
-| `grapheme_prev_boundary_chunk_start_fb5d7b6_1`    | `property_grapheme_prev_boundary_chunk_start_no_panic` |
-| `ascii_word_bound_drop_apostrophe_af87c8d_1`      | `property_ascii_word_bound_indices_match`          |
+| Variant | Property | Witness(es) |
+|---------|----------|-------------|
+| `ascii_word_bound_drop_apostrophe_af87c8d_1` | `AsciiWordBoundIndicesMatch` | `witness_ascii_word_bound_indices_match_case_cant_apostrophe` |
+| `grapheme_next_boundary_unwrap_0f55f70_1` | `GraphemeNextBoundaryEmptyChunk` | `witness_grapheme_next_boundary_empty_chunk_no_panic_case_ascii_suffix`, `witness_grapheme_next_boundary_empty_chunk_no_panic_case_legacy_mode`, `witness_grapheme_next_boundary_empty_chunk_no_panic_case_multibyte` |
+| `grapheme_prev_boundary_chunk_start_fb5d7b6_1` | `GraphemePrevBoundaryChunkStart` | `witness_grapheme_prev_boundary_chunk_start_no_panic_case_ascii`, `witness_grapheme_prev_boundary_chunk_start_no_panic_case_ascii_end`, `witness_grapheme_prev_boundary_chunk_start_no_panic_case_legacy` |
 
 ## Framework Coverage
 
-Every variant has adapters for all four frameworks. The runner binary
-`src/bin/etna.rs` dispatches on `<tool> <property>`.
-
-| Framework   | Adapter signature                                  |
-|-------------|----------------------------------------------------|
-| proptest    | closure over `(String, u8, bool)` / `String`       |
-| quickcheck  | `fn(u8, u8, bool)` / `fn(u8)` (avoids `String::Arbitrary`, which panics when `g.size() == 0`) |
-| crabcheck   | `fn((usize, usize, usize))` / `fn(usize)` (same reason as quickcheck) |
-| hegel       | `TestCase::draw` of `integers::<u8>()` / `text()`  |
-
-Each adapter calls the corresponding `property_<name>` function directly, so
-there is no re-implementation of the invariant inside any framework.
+| Property | proptest | quickcheck | crabcheck | hegel |
+|----------|---------:|-----------:|----------:|------:|
+| `AsciiWordBoundIndicesMatch` | ✓ | ✓ | ✓ | ✓ |
+| `GraphemeNextBoundaryEmptyChunk` | ✓ | ✓ | ✓ | ✓ |
+| `GraphemePrevBoundaryChunkStart` | ✓ | ✓ | ✓ | ✓ |
 
 ## Bug Details
 
-### `grapheme_next_boundary_unwrap_0f55f70_1`
+### 1. ascii_word_bound_drop_apostrophe
 
-The fix in commit `0f55f70b` (PR #137, "Fix unwrap panic in next_boundary()")
-replaced `chars().next().unwrap()` with a `match` that returns
-`Err(GraphemeIncomplete::NextChunk)` when the caller hands the cursor an
-empty chunk at the cursor's offset:
+- **Variant**: `ascii_word_bound_drop_apostrophe_af87c8d_1`
+- **Location**: `src/word.rs`
+- **Property**: `AsciiWordBoundIndicesMatch`
+- **Witness(es)**:
+  - `witness_ascii_word_bound_indices_match_case_cant_apostrophe`
+- **Source**: [#147](https://github.com/unicode-rs/unicode-segmentation/pull/147) — fast ascii path for word boundary indices (#147)
+  > The ASCII fast path in `split_word_bound_indices` classified `b'\''` as MidNumLetQ between two alphabetic bytes to match UAX#29 WB6/WB7; dropping it from `is_infix` makes `"can't"` split into three segments instead of one, diverging from the Unicode path.
+- **Fix commit**: `af87c8d331b81d2398997d89d2164c252ae6e9f5` — fast ascii path for word boundary indices (#147)
+- **Invariant violated**: For any `s.is_ascii()`, the ASCII fast path iterator must produce the same `(usize, &str)` sequence as the Unicode `split_word_bound_indices` iterator.
+- **How the mutation triggers**: The fix's `is_infix` arm accepts `b'.'`, `b':'`, and `b'\''`; the patch drops the apostrophe, so `"can't"` yields `[(0, "can"), (3, "'"), (4, "t")]` on the ASCII path but `[(0, "can't")]` on the Unicode path.
 
-```rust
-let mut iter = chunk[self.offset.saturating_sub(chunk_start)..].chars();
-let mut ch = match iter.next() {
-    Some(ch) => ch,
-    None => return Err(GraphemeIncomplete::NextChunk),
-};
-```
+### 2. grapheme_next_boundary_unwrap
 
-The patch reverts to the pre-fix form. On any `chunk_start == offset < len`
-input the iterator is empty and `.unwrap()` panics.
+- **Variant**: `grapheme_next_boundary_unwrap_0f55f70_1`
+- **Location**: `src/grapheme.rs`
+- **Property**: `GraphemeNextBoundaryEmptyChunk`
+- **Witness(es)**:
+  - `witness_grapheme_next_boundary_empty_chunk_no_panic_case_ascii_suffix`
+  - `witness_grapheme_next_boundary_empty_chunk_no_panic_case_legacy_mode`
+  - `witness_grapheme_next_boundary_empty_chunk_no_panic_case_multibyte`
+- **Source**: [#137](https://github.com/unicode-rs/unicode-segmentation/pull/137) — Fix unwrap panic in next_boundary() (#137)
+  > `GraphemeCursor::next_boundary` called `chunk.chars().next().unwrap()` on the provided chunk slice; when the caller handed in an empty chunk at the cursor's own offset, the unwrap panicked instead of returning `Err(GraphemeIncomplete::NextChunk)`.
+- **Fix commit**: `0f55f70b445202fd9d3c101b9936e6649e808441` — Fix unwrap panic in next_boundary() (#137)
+- **Invariant violated**: `GraphemeCursor::next_boundary(chunk, chunk_start)` must not panic when called with an empty chunk at `chunk_start == cursor.offset`; it must return `Err(GraphemeIncomplete::NextChunk)` so the caller can supply the next chunk.
+- **How the mutation triggers**: The fix replaced `chunks().next().unwrap()` with a `match` that returns `Err(NextChunk)` when the iterator is empty; the patch reverts to the unguarded unwrap, so any `chunk_start == cursor.offset < len` input panics on the empty iterator.
 
-**Property.** `property_grapheme_next_boundary_empty_chunk_no_panic(s,
-offset, is_extended)` constructs a `GraphemeCursor` at `offset`, passes it
-`&s[offset..offset]` (an empty suffix chunk) and expects either
-`Err(NextChunk)` or `Ok(_)`; any panic counts as a failure.
+### 3. grapheme_prev_boundary_chunk_start
 
-### `grapheme_prev_boundary_chunk_start_fb5d7b6_1`
-
-The fix in commit `fb5d7b6` ("fix crashes on prev_boundary", issues #38/#39)
-added an early-return when the chunk exactly starts at the cursor offset:
-
-```rust
-if self.offset == chunk_start {
-    return Err(GraphemeIncomplete::PrevChunk);
-}
-```
-
-The patch removes that guard. The next line slices `chunk[..0]` and calls
-`chars().rev().next().unwrap()`, which panics.
-
-**Property.** `property_grapheme_prev_boundary_chunk_start_no_panic(s,
-offset, is_extended)` constructs a `GraphemeCursor` at `offset` and passes
-`&s[offset..]` as the chunk with `chunk_start == offset`. Must return
-`Err(PrevChunk)`; any panic or `Ok(_)` is a failure.
-
-### `ascii_word_bound_drop_apostrophe_af87c8d_1`
-
-Commit `af87c8d` (PR #147) added an ASCII fast path for word-bound indices
-iteration. The fast path classifies `b'\''` as MidNumLetQ between two
-alphabetic bytes, matching UAX#29 WB6/WB7 so that words like `"can't"` are
-one segment.
-
-The patch drops `b'\''` from the `is_infix` arm, leaving only `b'.'` and
-`b':'`. The Unicode path (`split_word_bound_indices`) is unchanged. For
-input `"can't"` the fast path yields `[(0, "can"), (3, "'"), (4, "t")]`
-while the Unicode path returns `[(0, "can't")]`.
-
-**Property.** `property_ascii_word_bound_indices_match(s)` requires that
-for any `s.is_ascii()`, the fast path iterator and `split_word_bound_indices`
-produce identical `(usize, &str)` sequences.
+- **Variant**: `grapheme_prev_boundary_chunk_start_fb5d7b6_1`
+- **Location**: `src/grapheme.rs`
+- **Property**: `GraphemePrevBoundaryChunkStart`
+- **Witness(es)**:
+  - `witness_grapheme_prev_boundary_chunk_start_no_panic_case_ascii`
+  - `witness_grapheme_prev_boundary_chunk_start_no_panic_case_ascii_end`
+  - `witness_grapheme_prev_boundary_chunk_start_no_panic_case_legacy`
+- **Source**: [#38](https://github.com/unicode-rs/unicode-segmentation/issues/38), [#39](https://github.com/unicode-rs/unicode-segmentation/issues/39) — fix crashes on prev_boundary
+  > `GraphemeCursor::prev_boundary` sliced `chunk[..0]` and unwrapped the reversed iterator when the chunk started exactly at the cursor's offset, panicking instead of returning `Err(GraphemeIncomplete::PrevChunk)`.
+- **Fix commit**: `fb5d7b6714d265aae844ce8f7df35d675505026f` — fix crashes on prev_boundary
+- **Invariant violated**: `GraphemeCursor::prev_boundary(chunk, chunk_start)` with `chunk_start == cursor.offset` must return `Err(GraphemeIncomplete::PrevChunk)`; it must not panic.
+- **How the mutation triggers**: The fix added `if self.offset == chunk_start { return Err(PrevChunk); }` early-return; the patch removes that guard, so the next line's `chars().rev().next().unwrap()` on an empty `chunk[..0]` panics.

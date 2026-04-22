@@ -1,50 +1,89 @@
-# ETNA workload index for unicode-segmentation.
-#
-# One [[variant]] per injected mutation. Source of truth for variant->property
-# mapping. Every other fact is derivable from the source tree:
-#   - ls patches/*.patch                               (patch-based variants)
-#   - grep -rn "pub fn property_" src/                 (property functions)
-#   - grep -rn "fn witness_.*_case_" tests/ src/       (witness tests)
-#
-# Base commit for this workload is HEAD of the bootstrap ancestor of all
-# etna/<variant> branches. Recover with: `git merge-base --octopus etna/*`.
+name = "unicode-segmentation"
+language = "rust"
+crate = "unicode-segmentation"
+base_commit = "e3a71e1e2c398de1c9bbb7697f9c2bbfb9b90fdc"
 
-[[variant]]
-name = "grapheme_next_boundary_unwrap_0f55f70_1"
-property = "grapheme_next_boundary_empty_chunk_no_panic"
-injection = "patch"
+[[tasks]]
+mutations = ["grapheme_next_boundary_unwrap_0f55f70_1"]
+
+[tasks.source]
+repo = "https://github.com/unicode-rs/unicode-segmentation"
+commits = ["0f55f70b445202fd9d3c101b9936e6649e808441"]
+commit_subjects = ["Fix unwrap panic in next_boundary() (#137)"]
+prs = [137]
+summary = "`GraphemeCursor::next_boundary` called `chunk.chars().next().unwrap()` on the provided chunk slice; when the caller handed in an empty chunk at the cursor's own offset, the unwrap panicked instead of returning `Err(GraphemeIncomplete::NextChunk)`."
+
+[tasks.injection]
+kind = "patch"
+files = ["src/grapheme.rs"]
+locations = [{ file = "src/grapheme.rs" }]
 patch = "patches/grapheme_next_boundary_unwrap_0f55f70_1.patch"
-source_commit = "0f55f70b445202fd9d3c101b9936e6649e808441"
-witnesses = [
-    "witness_grapheme_next_boundary_empty_chunk_no_panic_case_ascii_suffix",
-    "witness_grapheme_next_boundary_empty_chunk_no_panic_case_legacy_mode",
-    "witness_grapheme_next_boundary_empty_chunk_no_panic_case_multibyte",
-]
-frameworks = ["proptest", "quickcheck", "crabcheck", "hegel"]
-files = ["src/grapheme.rs"]
 
-[[variant]]
-name = "grapheme_prev_boundary_chunk_start_fb5d7b6_1"
-property = "grapheme_prev_boundary_chunk_start_no_panic"
-injection = "patch"
+[tasks.bug]
+short_name = "grapheme_next_boundary_unwrap"
+invariant = "`GraphemeCursor::next_boundary(chunk, chunk_start)` must not panic when called with an empty chunk at `chunk_start == cursor.offset`; it must return `Err(GraphemeIncomplete::NextChunk)` so the caller can supply the next chunk."
+how_triggered = "The fix replaced `chunks().next().unwrap()` with a `match` that returns `Err(NextChunk)` when the iterator is empty; the patch reverts to the unguarded unwrap, so any `chunk_start == cursor.offset < len` input panics on the empty iterator."
+
+[[tasks.tasks]]
+property = "GraphemeNextBoundaryEmptyChunk"
+witnesses = [
+  { test_fn = "witness_grapheme_next_boundary_empty_chunk_no_panic_case_ascii_suffix" },
+  { test_fn = "witness_grapheme_next_boundary_empty_chunk_no_panic_case_legacy_mode" },
+  { test_fn = "witness_grapheme_next_boundary_empty_chunk_no_panic_case_multibyte" },
+]
+
+[[tasks]]
+mutations = ["grapheme_prev_boundary_chunk_start_fb5d7b6_1"]
+
+[tasks.source]
+repo = "https://github.com/unicode-rs/unicode-segmentation"
+commits = ["fb5d7b6714d265aae844ce8f7df35d675505026f"]
+commit_subjects = ["fix crashes on prev_boundary"]
+issues = [38, 39]
+summary = "`GraphemeCursor::prev_boundary` sliced `chunk[..0]` and unwrapped the reversed iterator when the chunk started exactly at the cursor's offset, panicking instead of returning `Err(GraphemeIncomplete::PrevChunk)`."
+
+[tasks.injection]
+kind = "patch"
+files = ["src/grapheme.rs"]
+locations = [{ file = "src/grapheme.rs" }]
 patch = "patches/grapheme_prev_boundary_chunk_start_fb5d7b6_1.patch"
-source_commit = "fb5d7b6714d265aae844ce8f7df35d675505026f"
-witnesses = [
-    "witness_grapheme_prev_boundary_chunk_start_no_panic_case_ascii",
-    "witness_grapheme_prev_boundary_chunk_start_no_panic_case_ascii_end",
-    "witness_grapheme_prev_boundary_chunk_start_no_panic_case_legacy",
-]
-frameworks = ["proptest", "quickcheck", "crabcheck", "hegel"]
-files = ["src/grapheme.rs"]
 
-[[variant]]
-name = "ascii_word_bound_drop_apostrophe_af87c8d_1"
-property = "ascii_word_bound_indices_match"
-injection = "patch"
-patch = "patches/ascii_word_bound_drop_apostrophe_af87c8d_1.patch"
-source_commit = "af87c8d331b81d2398997d89d2164c252ae6e9f5"
+[tasks.bug]
+short_name = "grapheme_prev_boundary_chunk_start"
+invariant = "`GraphemeCursor::prev_boundary(chunk, chunk_start)` with `chunk_start == cursor.offset` must return `Err(GraphemeIncomplete::PrevChunk)`; it must not panic."
+how_triggered = "The fix added `if self.offset == chunk_start { return Err(PrevChunk); }` early-return; the patch removes that guard, so the next line's `chars().rev().next().unwrap()` on an empty `chunk[..0]` panics."
+
+[[tasks.tasks]]
+property = "GraphemePrevBoundaryChunkStart"
 witnesses = [
-    "witness_ascii_word_bound_indices_match_case_cant_apostrophe",
+  { test_fn = "witness_grapheme_prev_boundary_chunk_start_no_panic_case_ascii" },
+  { test_fn = "witness_grapheme_prev_boundary_chunk_start_no_panic_case_ascii_end" },
+  { test_fn = "witness_grapheme_prev_boundary_chunk_start_no_panic_case_legacy" },
 ]
-frameworks = ["proptest", "quickcheck", "crabcheck", "hegel"]
+
+[[tasks]]
+mutations = ["ascii_word_bound_drop_apostrophe_af87c8d_1"]
+
+[tasks.source]
+repo = "https://github.com/unicode-rs/unicode-segmentation"
+commits = ["af87c8d331b81d2398997d89d2164c252ae6e9f5"]
+commit_subjects = ["fast ascii path for word boundary indices (#147)"]
+prs = [147]
+summary = "The ASCII fast path in `split_word_bound_indices` classified `b'\\''` as MidNumLetQ between two alphabetic bytes to match UAX#29 WB6/WB7; dropping it from `is_infix` makes `\"can't\"` split into three segments instead of one, diverging from the Unicode path."
+
+[tasks.injection]
+kind = "patch"
 files = ["src/word.rs"]
+locations = [{ file = "src/word.rs" }]
+patch = "patches/ascii_word_bound_drop_apostrophe_af87c8d_1.patch"
+
+[tasks.bug]
+short_name = "ascii_word_bound_drop_apostrophe"
+invariant = "For any `s.is_ascii()`, the ASCII fast path iterator must produce the same `(usize, &str)` sequence as the Unicode `split_word_bound_indices` iterator."
+how_triggered = "The fix's `is_infix` arm accepts `b'.'`, `b':'`, and `b'\\''`; the patch drops the apostrophe, so `\"can't\"` yields `[(0, \"can\"), (3, \"'\"), (4, \"t\")]` on the ASCII path but `[(0, \"can't\")]` on the Unicode path."
+
+[[tasks.tasks]]
+property = "AsciiWordBoundIndicesMatch"
+witnesses = [
+  { test_fn = "witness_ascii_word_bound_indices_match_case_cant_apostrophe" },
+]
