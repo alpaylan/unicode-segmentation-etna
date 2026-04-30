@@ -35,12 +35,12 @@ default = ["etna"]
 
 [dependencies]
 proptest   = { version = "1.7.0" }
-quickcheck = { path = "/Users/akeles/Programming/projects/PbtBenchmark/quickcheck", features = ["etna"] }
-crabcheck  = { path = "/Users/akeles/Programming/projects/PbtBenchmark/crabcheck" }
+quickcheck = { git = "https://github.com/alpaylan/quickcheck.git", branch = "master", features = ["etna"] }
+crabcheck  = { git = "https://github.com/alpaylan/crabcheck.git", branch = "main" }
 hegeltest  = "0.3.7"
 
 [dev-dependencies]
-quickcheck_macros = { path = "/Users/akeles/Programming/projects/PbtBenchmark/quickcheck/quickcheck_macros" }
+quickcheck_macros = { git = "https://github.com/alpaylan/quickcheck.git", branch = "master" }
 criterion = "0.5"
 
 [[bench]]

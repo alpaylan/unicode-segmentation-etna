@@ -1,5 +1,6 @@
 name = "unicode-segmentation"
 language = "rust"
+strategies = ["proptest", "quickcheck", "crabcheck", "hegel"]
 crate = "unicode-segmentation"
 base_commit = "e3a71e1e2c398de1c9bbb7697f9c2bbfb9b90fdc"
 
