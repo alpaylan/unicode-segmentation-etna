@@ -35,12 +35,14 @@ default = ["etna"]
 
 [dependencies]
 proptest   = { version = "1.7.0" }
-quickcheck = { git = "https://github.com/alpaylan/quickcheck.git", branch = "master", features = ["etna"] }
-crabcheck  = { git = "https://github.com/alpaylan/crabcheck.git", branch = "main" }
+quickcheck = { path = "/Users/akeles/Programming/projects/PbtBenchmark/quickcheck", features = ["etna"] }
+crabcheck  = { path = "/Users/akeles/Programming/projects/PbtBenchmark/crabcheck" }
 hegeltest  = "0.3.7"
+rand       = "0.9"
 
 [dev-dependencies]
-quickcheck_macros = { git = "https://github.com/alpaylan/quickcheck.git", branch = "master" }
+serde_json = "1"
+quickcheck_macros = { path = "/Users/akeles/Programming/projects/PbtBenchmark/quickcheck/quickcheck_macros" }
 criterion = "0.5"
 
 [[bench]]
@@ -62,4 +64,9 @@ harness = false
 [[bin]]
 name = "etna"
 path = "src/bin/etna.rs"
+required-features = ["etna"]
+
+[[bin]]
+name = "etna-faultloc"
+path = "src/bin/etna-faultloc.rs"
 required-features = ["etna"]

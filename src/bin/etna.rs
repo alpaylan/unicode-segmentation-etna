@@ -5,16 +5,23 @@
 //!   property: GraphemeNextBoundaryEmptyChunk | GraphemePrevBoundaryChunkStart
 //!             | AsciiWordBoundIndicesMatch | All
 //!
-//! Each invocation prints exactly one JSON object to stdout and always exits
-//! with status 0 (except on argument-parsing errors, which exit 2). Etna's
-//! `log_process_output` reads `status`/`tests`/`time`/`counterexample`/`error`
-//! from the JSON line; non-zero exits would be recorded as `aborted`.
+//! All four frameworks share the same generator shapes:
+//!   * AnyText:   String of up to 16 arbitrary Unicode chars
+//!   * AsciiText: String of up to 32 ASCII bytes (0..=127)
+//!   * offset tag is a u8 clamped to a valid char boundary via pick_offset
+//!   * is_extended is a plain bool
+//!
+//! Each invocation prints exactly one JSON object to stdout and exits 0
+//! (argument-parsing errors exit 2).
 
 use crabcheck::quickcheck as crabcheck_qc;
+use crabcheck::quickcheck::Arbitrary as CcArbitrary;
 use hegel::{generators as hgen, Hegel, Settings as HegelSettings};
 use proptest::prelude::*;
-use proptest::test_runner::{Config as ProptestConfig, TestCaseError, TestRunner};
-use quickcheck::{QuickCheck, ResultStatus, TestResult};
+use proptest::test_runner::{Config as ProptestConfig, TestCaseError, TestError, TestRunner};
+use quickcheck::{Arbitrary as QcArbitrary, Gen, QuickCheck, ResultStatus, TestResult};
+use rand::Rng;
+use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
@@ -22,6 +29,100 @@ use unicode_segmentation::etna::{
     property_ascii_word_bound_indices_match, property_grapheme_next_boundary_empty_chunk_no_panic,
     property_grapheme_prev_boundary_chunk_start_no_panic, PropertyResult,
 };
+
+// ─────────────────── shared generator newtypes ───────────────────
+
+#[derive(Clone)]
+struct AnyText(String);
+
+impl fmt::Debug for AnyText {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Debug::fmt(&self.0, f)
+    }
+}
+
+impl fmt::Display for AnyText {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Debug::fmt(&self.0, f)
+    }
+}
+
+fn draw_char_qc(g: &mut Gen) -> char {
+    loop {
+        let cp = g.random_range(0u32..=0x10FFFFu32);
+        if let Some(c) = char::from_u32(cp) {
+            return c;
+        }
+    }
+}
+
+fn draw_char_cc<R: Rng>(rng: &mut R) -> char {
+    loop {
+        let cp = rng.random_range(0u32..=0x10FFFFu32);
+        if let Some(c) = char::from_u32(cp) {
+            return c;
+        }
+    }
+}
+
+impl QcArbitrary for AnyText {
+    fn arbitrary(g: &mut Gen) -> Self {
+        let len = g.random_range(0..16u32) as usize;
+        let mut s = String::with_capacity(len * 4);
+        for _ in 0..len {
+            s.push(draw_char_qc(g));
+        }
+        AnyText(s)
+    }
+}
+
+impl<R: Rng> CcArbitrary<R> for AnyText {
+    fn generate(rng: &mut R, _n: usize) -> Self {
+        let len = rng.random_range(0..16u32) as usize;
+        let mut s = String::with_capacity(len * 4);
+        for _ in 0..len {
+            s.push(draw_char_cc(rng));
+        }
+        AnyText(s)
+    }
+}
+
+#[derive(Clone)]
+struct AsciiText(String);
+
+impl fmt::Debug for AsciiText {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Debug::fmt(&self.0, f)
+    }
+}
+
+impl fmt::Display for AsciiText {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Debug::fmt(&self.0, f)
+    }
+}
+
+impl QcArbitrary for AsciiText {
+    fn arbitrary(g: &mut Gen) -> Self {
+        let len = g.random_range(0..32u32) as usize;
+        let mut s = String::with_capacity(len);
+        for _ in 0..len {
+            s.push(g.random_range(0u8..=127u8) as char);
+        }
+        AsciiText(s)
+    }
+}
+
+impl<R: Rng> CcArbitrary<R> for AsciiText {
+    fn generate(rng: &mut R, _n: usize) -> Self {
+        let len = rng.random_range(0..32u32) as usize;
+        let mut s = String::with_capacity(len);
+        for _ in 0..len {
+            s.push(rng.random_range(0u8..=127u8) as char);
+        }
+        AsciiText(s)
+    }
+}
 
 #[derive(Default, Clone, Copy)]
 struct Metrics {
@@ -47,26 +148,9 @@ fn to_err(r: PropertyResult) -> Result<(), String> {
     }
 }
 
-/// Pick an ASCII-ish string from a u8 tag so we get interesting coverage from
-/// fixed-argument frameworks (quickcheck, crabcheck) without having to wire
-/// full `Arbitrary` instances for String.
-fn pick_string(tag: u8) -> String {
-    match tag % 9 {
-        0 => String::new(),
-        1 => "a".to_string(),
-        2 => "ab".to_string(),
-        3 => "abcd".to_string(),
-        4 => "abcdefgh".to_string(),
-        5 => "héllo".to_string(),
-        6 => "Hello, world!".to_string(),
-        7 => "can't".to_string(),
-        _ => "127.0.0.1:9090".to_string(),
-    }
-}
-
 /// Clamp an offset tag to a valid UTF-8 char boundary in `s`. Returns an
-/// offset in `1..s.len()` when possible; `0` when the string is empty. The
-/// downstream property functions Discard on out-of-domain inputs.
+/// offset in `0..=s.len()` aligned to a char boundary. The downstream property
+/// functions Discard on out-of-domain inputs.
 fn pick_offset(s: &str, tag: u8) -> usize {
     if s.is_empty() {
         return 0;
@@ -126,24 +210,16 @@ fn run_etna_property(property: &str) -> Outcome {
 
 // ------------------------------ proptest ------------------------------------
 
-fn ascii_string_strategy() -> BoxedStrategy<String> {
-    proptest::collection::vec(0u8..=127u8, 0..32)
-        .prop_map(|v| v.into_iter().map(|b| b as char).collect::<String>())
+fn any_text_strategy() -> BoxedStrategy<String> {
+    proptest::collection::vec(any::<char>(), 0..16)
+        .prop_map(|v| v.into_iter().collect::<String>())
         .boxed()
 }
 
-fn text_string_strategy() -> BoxedStrategy<String> {
-    // Mix of ASCII and multi-byte UTF-8 so grapheme-path mutations get
-    // meaningful coverage.
-    proptest::prop_oneof![
-        proptest::collection::vec(any::<char>(), 0..16)
-            .prop_map(|v| v.into_iter().collect::<String>())
-            .boxed(),
-        proptest::collection::vec(0u8..=127u8, 0..32)
-            .prop_map(|v| v.into_iter().map(|b| b as char).collect::<String>())
-            .boxed(),
-    ]
-    .boxed()
+fn ascii_text_strategy() -> BoxedStrategy<String> {
+    proptest::collection::vec(0u8..=127u8, 0..32)
+        .prop_map(|v| v.into_iter().map(|b| b as char).collect::<String>())
+        .boxed()
 }
 
 fn run_proptest_property(property: &str) -> Outcome {
@@ -152,48 +228,51 @@ fn run_proptest_property(property: &str) -> Outcome {
     }
     let counter = Arc::new(AtomicU64::new(0));
     let t0 = Instant::now();
-    let mut runner = TestRunner::new(ProptestConfig::default());
+    let mut runner = TestRunner::new(ProptestConfig { cases: 40_000_000, ..ProptestConfig::default() });
     let c = counter.clone();
     let result: Result<(), String> = match property {
         "GraphemeNextBoundaryEmptyChunk" => {
-            let strat = (text_string_strategy(), 0u8..255, any::<bool>());
+            let strat = (any_text_strategy(), any::<u8>(), any::<bool>());
             runner
                 .run(&strat, move |(s, tag, is_extended)| {
                     c.fetch_add(1, Ordering::Relaxed);
                     let off = pick_offset(&s, tag);
+                    let s_cex = s.clone();
                     match property_grapheme_next_boundary_empty_chunk_no_panic(s, off, is_extended)
                     {
                         PropertyResult::Pass | PropertyResult::Discard => Ok(()),
-                        PropertyResult::Fail(m) => Err(TestCaseError::fail(m)),
+                        PropertyResult::Fail(_) => Err(TestCaseError::fail(format!("({:?} {} {})", s_cex, off, is_extended))),
                     }
                 })
-                .map_err(|e| e.to_string())
+                .map_err(|e| match e { TestError::Fail(reason, _) => reason.to_string(), other => other.to_string() })
         }
         "GraphemePrevBoundaryChunkStart" => {
-            let strat = (text_string_strategy(), 0u8..255, any::<bool>());
+            let strat = (any_text_strategy(), any::<u8>(), any::<bool>());
             runner
                 .run(&strat, move |(s, tag, is_extended)| {
                     c.fetch_add(1, Ordering::Relaxed);
                     let off = pick_offset(&s, tag);
+                    let s_cex = s.clone();
                     match property_grapheme_prev_boundary_chunk_start_no_panic(s, off, is_extended)
                     {
                         PropertyResult::Pass | PropertyResult::Discard => Ok(()),
-                        PropertyResult::Fail(m) => Err(TestCaseError::fail(m)),
+                        PropertyResult::Fail(_) => Err(TestCaseError::fail(format!("({:?} {} {})", s_cex, off, is_extended))),
                     }
                 })
-                .map_err(|e| e.to_string())
+                .map_err(|e| match e { TestError::Fail(reason, _) => reason.to_string(), other => other.to_string() })
         }
         "AsciiWordBoundIndicesMatch" => {
-            let strat = ascii_string_strategy();
+            let strat = ascii_text_strategy();
             runner
                 .run(&strat, move |s| {
                     c.fetch_add(1, Ordering::Relaxed);
+                    let s_cex = s.clone();
                     match property_ascii_word_bound_indices_match(s) {
                         PropertyResult::Pass | PropertyResult::Discard => Ok(()),
-                        PropertyResult::Fail(m) => Err(TestCaseError::fail(m)),
+                        PropertyResult::Fail(_) => Err(TestCaseError::fail(format!("({:?})", s_cex))),
                     }
                 })
-                .map_err(|e| e.to_string())
+                .map_err(|e| match e { TestError::Fail(reason, _) => reason.to_string(), other => other.to_string() })
         }
         _ => {
             return (
@@ -211,37 +290,29 @@ fn run_proptest_property(property: &str) -> Outcome {
 
 static QC_COUNTER: AtomicU64 = AtomicU64::new(0);
 
-fn qc_grapheme_next_boundary_empty_chunk(s_tag: u8, off_tag: u8, is_extended: bool) -> TestResult {
+fn qc_grapheme_next_boundary_empty_chunk(s: AnyText, off_tag: u8, is_extended: bool) -> TestResult {
     QC_COUNTER.fetch_add(1, Ordering::Relaxed);
-    let s = pick_string(s_tag);
-    let off = pick_offset(&s, off_tag);
-    match property_grapheme_next_boundary_empty_chunk_no_panic(s, off, is_extended) {
+    let off = pick_offset(&s.0, off_tag);
+    match property_grapheme_next_boundary_empty_chunk_no_panic(s.0, off, is_extended) {
         PropertyResult::Pass => TestResult::passed(),
         PropertyResult::Discard => TestResult::discard(),
         PropertyResult::Fail(_) => TestResult::failed(),
     }
 }
 
-fn qc_grapheme_prev_boundary_chunk_start(s_tag: u8, off_tag: u8, is_extended: bool) -> TestResult {
+fn qc_grapheme_prev_boundary_chunk_start(s: AnyText, off_tag: u8, is_extended: bool) -> TestResult {
     QC_COUNTER.fetch_add(1, Ordering::Relaxed);
-    let s = pick_string(s_tag);
-    let off = pick_offset(&s, off_tag);
-    match property_grapheme_prev_boundary_chunk_start_no_panic(s, off, is_extended) {
+    let off = pick_offset(&s.0, off_tag);
+    match property_grapheme_prev_boundary_chunk_start_no_panic(s.0, off, is_extended) {
         PropertyResult::Pass => TestResult::passed(),
         PropertyResult::Discard => TestResult::discard(),
         PropertyResult::Fail(_) => TestResult::failed(),
     }
 }
 
-fn qc_ascii_word_bound_indices_match(tag: u8) -> TestResult {
-    // Avoid quickcheck's String::Arbitrary, which panics with
-    // "cannot sample empty range" on the first iterations when g.size() == 0.
+fn qc_ascii_word_bound_indices_match(s: AsciiText) -> TestResult {
     QC_COUNTER.fetch_add(1, Ordering::Relaxed);
-    let s = pick_string(tag);
-    if !s.is_ascii() {
-        return TestResult::discard();
-    }
-    match property_ascii_word_bound_indices_match(s) {
+    match property_ascii_word_bound_indices_match(s.0) {
         PropertyResult::Pass => TestResult::passed(),
         PropertyResult::Discard => TestResult::discard(),
         PropertyResult::Fail(_) => TestResult::failed(),
@@ -254,16 +325,16 @@ fn run_quickcheck_property(property: &str) -> Outcome {
     }
     QC_COUNTER.store(0, Ordering::Relaxed);
     let t0 = Instant::now();
-    let mut qc = QuickCheck::new().tests(200).max_tests(2000);
+    let mut qc = QuickCheck::new().tests(40_000_000).max_tests(80_000_000);
     let result = match property {
         "GraphemeNextBoundaryEmptyChunk" => qc.quicktest(
-            qc_grapheme_next_boundary_empty_chunk as fn(u8, u8, bool) -> TestResult,
+            qc_grapheme_next_boundary_empty_chunk as fn(AnyText, u8, bool) -> TestResult,
         ),
         "GraphemePrevBoundaryChunkStart" => qc.quicktest(
-            qc_grapheme_prev_boundary_chunk_start as fn(u8, u8, bool) -> TestResult,
+            qc_grapheme_prev_boundary_chunk_start as fn(AnyText, u8, bool) -> TestResult,
         ),
         "AsciiWordBoundIndicesMatch" => {
-            qc.quicktest(qc_ascii_word_bound_indices_match as fn(u8) -> TestResult)
+            qc.quicktest(qc_ascii_word_bound_indices_match as fn(AsciiText) -> TestResult)
         }
         _ => {
             return (
@@ -278,7 +349,7 @@ fn run_quickcheck_property(property: &str) -> Outcome {
     let status = match result.status {
         ResultStatus::Finished => Ok(()),
         ResultStatus::Failed { arguments } => Err(format!(
-            "quickcheck failed with counterexample: ({})",
+            "({})",
             arguments.join(" ")
         )),
         ResultStatus::Aborted { err } => Err(format!("quickcheck aborted: {err:?}")),
@@ -295,35 +366,29 @@ fn run_quickcheck_property(property: &str) -> Outcome {
 
 static CC_COUNTER: AtomicU64 = AtomicU64::new(0);
 
-fn cc_grapheme_next_boundary_empty_chunk((s_tag, off_tag, flag): (usize, usize, usize)) -> Option<bool> {
+fn cc_grapheme_next_boundary_empty_chunk((s, off_tag, is_extended): (AnyText, u8, bool)) -> Option<bool> {
     CC_COUNTER.fetch_add(1, Ordering::Relaxed);
-    let s = pick_string(s_tag as u8);
-    let off = pick_offset(&s, off_tag as u8);
-    match property_grapheme_next_boundary_empty_chunk_no_panic(s, off, (flag & 1) == 1) {
+    let off = pick_offset(&s.0, off_tag);
+    match property_grapheme_next_boundary_empty_chunk_no_panic(s.0, off, is_extended) {
         PropertyResult::Pass => Some(true),
         PropertyResult::Fail(_) => Some(false),
         PropertyResult::Discard => None,
     }
 }
 
-fn cc_grapheme_prev_boundary_chunk_start((s_tag, off_tag, flag): (usize, usize, usize)) -> Option<bool> {
+fn cc_grapheme_prev_boundary_chunk_start((s, off_tag, is_extended): (AnyText, u8, bool)) -> Option<bool> {
     CC_COUNTER.fetch_add(1, Ordering::Relaxed);
-    let s = pick_string(s_tag as u8);
-    let off = pick_offset(&s, off_tag as u8);
-    match property_grapheme_prev_boundary_chunk_start_no_panic(s, off, (flag & 1) == 1) {
+    let off = pick_offset(&s.0, off_tag);
+    match property_grapheme_prev_boundary_chunk_start_no_panic(s.0, off, is_extended) {
         PropertyResult::Pass => Some(true),
         PropertyResult::Fail(_) => Some(false),
         PropertyResult::Discard => None,
     }
 }
 
-fn cc_ascii_word_bound_indices_match(tag: usize) -> Option<bool> {
+fn cc_ascii_word_bound_indices_match(s: AsciiText) -> Option<bool> {
     CC_COUNTER.fetch_add(1, Ordering::Relaxed);
-    let s = pick_string(tag as u8);
-    if !s.is_ascii() {
-        return None;
-    }
-    match property_ascii_word_bound_indices_match(s) {
+    match property_ascii_word_bound_indices_match(s.0) {
         PropertyResult::Pass => Some(true),
         PropertyResult::Fail(_) => Some(false),
         PropertyResult::Discard => None,
@@ -358,10 +423,9 @@ fn run_crabcheck_property(property: &str) -> Outcome {
     let metrics = Metrics { inputs, elapsed_us };
     let status = match result.status {
         crabcheck_qc::ResultStatus::Finished => Ok(()),
-        crabcheck_qc::ResultStatus::Failed { arguments } => Err(format!(
-            "crabcheck failed with counterexample: ({})",
-            arguments.join(" ")
-        )),
+        crabcheck_qc::ResultStatus::Failed { arguments } => {
+            Err(format!("({})", arguments.join(" ")))
+        },
         crabcheck_qc::ResultStatus::TimedOut => Err("crabcheck timed out".to_string()),
         crabcheck_qc::ResultStatus::GaveUp => Err(format!(
             "crabcheck gave up: passed={}, discarded={}",
@@ -379,7 +443,7 @@ fn run_crabcheck_property(property: &str) -> Outcome {
 static HG_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 fn hegel_settings() -> HegelSettings {
-    HegelSettings::new().test_cases(200).seed(Some(0xF100_A7))
+    HegelSettings::new().test_cases(40_000_000)
 }
 
 fn run_hegel_property(property: &str) -> Outcome {
@@ -393,15 +457,26 @@ fn run_hegel_property(property: &str) -> Outcome {
         "GraphemeNextBoundaryEmptyChunk" => {
             Hegel::new(|tc: hegel::TestCase| {
                 HG_COUNTER.fetch_add(1, Ordering::Relaxed);
-                let s_tag = tc.draw(hgen::integers::<u8>());
+                let len = tc.draw(hgen::integers::<u32>().min_value(0).max_value(15)) as usize;
+                let mut s = String::with_capacity(len * 4);
+                for _ in 0..len {
+                    loop {
+                        let cp = tc.draw(hgen::integers::<u32>().min_value(0).max_value(0x10FFFF));
+                        if let Some(c) = char::from_u32(cp) {
+                            s.push(c);
+                            break;
+                        }
+                    }
+                }
                 let off_tag = tc.draw(hgen::integers::<u8>());
                 let flag = tc.draw(hgen::integers::<u8>());
-                let s = pick_string(s_tag);
                 let off = pick_offset(&s, off_tag);
-                if let PropertyResult::Fail(m) =
-                    property_grapheme_next_boundary_empty_chunk_no_panic(s, off, (flag & 1) == 1)
+                let is_extended = (flag & 1) == 1;
+                let s_cex = s.clone();
+                if let PropertyResult::Fail(_) =
+                    property_grapheme_next_boundary_empty_chunk_no_panic(s, off, is_extended)
                 {
-                    panic!("{}", m);
+                    panic!("({:?} {} {})", s_cex, off, is_extended);
                 }
             })
             .settings(settings.clone())
@@ -410,15 +485,26 @@ fn run_hegel_property(property: &str) -> Outcome {
         "GraphemePrevBoundaryChunkStart" => {
             Hegel::new(|tc: hegel::TestCase| {
                 HG_COUNTER.fetch_add(1, Ordering::Relaxed);
-                let s_tag = tc.draw(hgen::integers::<u8>());
+                let len = tc.draw(hgen::integers::<u32>().min_value(0).max_value(15)) as usize;
+                let mut s = String::with_capacity(len * 4);
+                for _ in 0..len {
+                    loop {
+                        let cp = tc.draw(hgen::integers::<u32>().min_value(0).max_value(0x10FFFF));
+                        if let Some(c) = char::from_u32(cp) {
+                            s.push(c);
+                            break;
+                        }
+                    }
+                }
                 let off_tag = tc.draw(hgen::integers::<u8>());
                 let flag = tc.draw(hgen::integers::<u8>());
-                let s = pick_string(s_tag);
                 let off = pick_offset(&s, off_tag);
-                if let PropertyResult::Fail(m) =
-                    property_grapheme_prev_boundary_chunk_start_no_panic(s, off, (flag & 1) == 1)
+                let is_extended = (flag & 1) == 1;
+                let s_cex = s.clone();
+                if let PropertyResult::Fail(_) =
+                    property_grapheme_prev_boundary_chunk_start_no_panic(s, off, is_extended)
                 {
-                    panic!("{}", m);
+                    panic!("({:?} {} {})", s_cex, off, is_extended);
                 }
             })
             .settings(settings.clone())
@@ -427,10 +513,15 @@ fn run_hegel_property(property: &str) -> Outcome {
         "AsciiWordBoundIndicesMatch" => {
             Hegel::new(|tc: hegel::TestCase| {
                 HG_COUNTER.fetch_add(1, Ordering::Relaxed);
-                let s = tc.draw(hgen::text().min_size(0).max_size(32));
-                let ascii: String = s.chars().map(|c| (c as u32 & 0x7f) as u8 as char).collect();
-                if let PropertyResult::Fail(m) = property_ascii_word_bound_indices_match(ascii) {
-                    panic!("{}", m);
+                let len = tc.draw(hgen::integers::<u32>().min_value(0).max_value(31)) as usize;
+                let mut s = String::with_capacity(len);
+                for _ in 0..len {
+                    let b = tc.draw(hgen::integers::<u8>().min_value(0).max_value(127));
+                    s.push(b as char);
+                }
+                let s_cex = s.clone();
+                if let PropertyResult::Fail(_) = property_ascii_word_bound_indices_match(s) {
+                    panic!("({:?})", s_cex);
                 }
             })
             .settings(settings.clone())
@@ -457,7 +548,7 @@ fn run_hegel_property(property: &str) -> Outcome {
                     Metrics::default(),
                 );
             }
-            Err(format!("hegel found counterexample: {msg}"))
+            Err(msg.strip_prefix("Property test failed: ").unwrap_or(&msg).to_string())
         }
     };
     (status, metrics)
